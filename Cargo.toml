@@ -8,6 +8,7 @@ license = "MIT"
 authors = ["CORUM COLLECTIVE LLC <engineering@corumcollective.com>"]
 repository = "https://github.com/santhsecurity/authjar"
 description = "Multi-cookie session management — parse Set-Cookie, domain-scoped storage, CSRF extraction, session persistence"
+readme = "README.md"
 keywords = ["cookie", "session", "http", "auth", "csrf", "web"]
 categories = ["authentication", "web-programming"]
 
