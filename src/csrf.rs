@@ -71,7 +71,7 @@ fn meta_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     // Allow name before content OR content before name
     RE.get_or_init(|| {
-        Regex::new(r#"(?i)<meta\s+(?:name=["']([^"']+)["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+name=["']([^"']+)["'])"#).unwrap()
+        Regex::new(r#"(?i)<meta\s+(?:name=["']([^"']+)["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+name=["']([^"']+)["'])"#).unwrap_or_else(|_| unreachable!())
     })
 }
 
@@ -79,7 +79,7 @@ fn input_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     // Allow name before value OR value before name
     RE.get_or_init(|| {
-        Regex::new(r#"(?i)<input\s+(?:[^>]*name=["']([^"']+)["'][^>]*value=["']([^"']+)["']|[^>]*value=["']([^"']+)["'][^>]*name=["']([^"']+)["'])"#).unwrap()
+        Regex::new(r#"(?i)<input\s+(?:[^>]*name=["']([^"']+)["'][^>]*value=["']([^"']+)["']|[^>]*value=["']([^"']+)["'][^>]*name=["']([^"']+)["'])"#).unwrap_or_else(|_| unreachable!())
     })
 }
 
