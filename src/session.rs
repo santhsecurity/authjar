@@ -180,29 +180,27 @@ impl Cookie {
             }
 
             match attribute.split_once('=') {
-                Some((key, value)) => {
-                    match key.trim().to_ascii_lowercase().as_str() {
-                        "domain" => {
-                            let normalized = normalize_domain(value.trim().trim_matches('"'));
-                            if validate_domain(&normalized).is_err() {
-                                return None;
-                            }
-                            cookie.domain = normalized;
+                Some((key, value)) => match key.trim().to_ascii_lowercase().as_str() {
+                    "domain" => {
+                        let normalized = normalize_domain(value.trim().trim_matches('"'));
+                        if validate_domain(&normalized).is_err() {
+                            return None;
                         }
-                        "path" => {
-                            let path = value.trim();
-                            cookie.path = if path.is_empty() {
-                                "/".to_string()
-                            } else {
-                                path.to_string()
-                            };
-                            if validate_cookie_path(&cookie.path).is_err() {
-                                return None;
-                            }
-                        }
-                        _ => return None,
+                        cookie.domain = normalized;
                     }
-                }
+                    "path" => {
+                        let path = value.trim();
+                        cookie.path = if path.is_empty() {
+                            "/".to_string()
+                        } else {
+                            path.to_string()
+                        };
+                        if validate_cookie_path(&cookie.path).is_err() {
+                            return None;
+                        }
+                    }
+                    _ => return None,
+                },
                 None => match attribute.to_ascii_lowercase().as_str() {
                     "httponly" => cookie.http_only = true,
                     "secure" => cookie.secure = true,
@@ -288,7 +286,12 @@ impl AuthSession {
     }
 
     /// Add a plain cookie with default path `/`.
-    pub fn add_cookie(&mut self, name: impl Into<String>, value: impl Into<String>, domain: impl Into<String>) {
+    pub fn add_cookie(
+        &mut self,
+        name: impl Into<String>,
+        value: impl Into<String>,
+        domain: impl Into<String>,
+    ) {
         self.add_cookie_with_path(name, value, domain, "/", false, false);
     }
 
@@ -508,10 +511,10 @@ impl SessionStore {
 
     /// Add or replace a session.
     pub fn add(&mut self, session: AuthSession) {
-        if !self.sessions.contains_key(&session.name) && self.sessions.len() >= MAX_SESSIONS_PER_STORE {
-            tracing::warn!(
-                "rejected session due to store limit (Fix: prune old sessions)"
-            );
+        if !self.sessions.contains_key(&session.name)
+            && self.sessions.len() >= MAX_SESSIONS_PER_STORE
+        {
+            tracing::warn!("rejected session due to store limit (Fix: prune old sessions)");
             return;
         }
         self.sessions.insert(session.name.clone(), session);
@@ -525,7 +528,9 @@ impl SessionStore {
         cookie_value: impl Into<String>,
         cookie_domain: impl Into<String>,
     ) {
-        if !self.sessions.contains_key(session_name) && self.sessions.len() >= MAX_SESSIONS_PER_STORE {
+        if !self.sessions.contains_key(session_name)
+            && self.sessions.len() >= MAX_SESSIONS_PER_STORE
+        {
             tracing::warn!(
                 "rejected session creation due to store limit (Fix: prune old sessions)"
             );
@@ -546,7 +551,9 @@ impl SessionStore {
         header_value: &str,
         default_domain: &str,
     ) {
-        if !self.sessions.contains_key(session_name) && self.sessions.len() >= MAX_SESSIONS_PER_STORE {
+        if !self.sessions.contains_key(session_name)
+            && self.sessions.len() >= MAX_SESSIONS_PER_STORE
+        {
             tracing::warn!(
                 "rejected session creation due to store limit (Fix: prune old sessions)"
             );
@@ -601,7 +608,9 @@ impl SessionStore {
         }
         for (name, session) in &self.sessions {
             if name.trim().is_empty() || name.chars().any(char::is_control) {
-                return Err(AuthJarError::Invalid(format!("invalid session name `{name}`")));
+                return Err(AuthJarError::Invalid(format!(
+                    "invalid session name `{name}`"
+                )));
             }
             if session.cookies.len() > MAX_COOKIES_PER_SESSION {
                 return Err(AuthJarError::Invalid(format!(
@@ -635,14 +644,16 @@ fn is_valid_cookie_name(name: &str) -> bool {
 fn is_valid_cookie_value(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= MAX_COOKIE_VALUE_LEN
-        && value.bytes().all(|byte| {
-            matches!(byte, 0x21..=0x7e) && !matches!(byte, b';' | b',' | b'\\' | b'"')
-        })
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, 0x21..=0x7e) && !matches!(byte, b';' | b',' | b'\\' | b'"'))
 }
 
 fn validate_domain(domain: &str) -> Result<(), AuthJarError> {
     if domain.is_empty() {
-        return Err(AuthJarError::Invalid("cookie domain cannot be empty".to_string()));
+        return Err(AuthJarError::Invalid(
+            "cookie domain cannot be empty".to_string(),
+        ));
     }
 
     if domain.len() > 253
@@ -651,14 +662,18 @@ fn validate_domain(domain: &str) -> Result<(), AuthJarError> {
         || domain.starts_with('.')
         || domain.ends_with('.')
     {
-        return Err(AuthJarError::Invalid(format!("invalid cookie domain `{domain}`")));
+        return Err(AuthJarError::Invalid(format!(
+            "invalid cookie domain `{domain}`"
+        )));
     }
 
     if !domain
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-'))
     {
-        return Err(AuthJarError::Invalid(format!("invalid cookie domain `{domain}`")));
+        return Err(AuthJarError::Invalid(format!(
+            "invalid cookie domain `{domain}`"
+        )));
     }
 
     Ok(())
@@ -670,7 +685,9 @@ fn validate_cookie_path(path: &str) -> Result<(), AuthJarError> {
         || !path.starts_with('/')
         || path.chars().any(char::is_control)
     {
-        return Err(AuthJarError::Invalid(format!("invalid cookie path `{path}`")));
+        return Err(AuthJarError::Invalid(format!(
+            "invalid cookie path `{path}`"
+        )));
     }
     Ok(())
 }
@@ -701,7 +718,11 @@ fn domain_matches(request_domain: &str, cookie_domain: &str, include_subdomains:
 }
 
 fn path_matches(request_path: &str, cookie_path: &str) -> bool {
-    let request_path = if request_path.is_empty() { "/" } else { request_path };
+    let request_path = if request_path.is_empty() {
+        "/"
+    } else {
+        request_path
+    };
     if cookie_path == "/" {
         return true;
     }
@@ -742,7 +763,8 @@ mod tests {
         session.add_cookie("auth", "xyz", "example.com");
 
         assert_eq!(session.cookie_count(), 2);
-        let header = session.cookie_header_for("example.com", "/", false, &SessionSettings::default());
+        let header =
+            session.cookie_header_for("example.com", "/", false, &SessionSettings::default());
         assert!(header.contains("PHPSESSID=abc123"));
         assert!(header.contains("auth=xyz"));
     }
@@ -818,7 +840,11 @@ mod tests {
 
     #[test]
     fn parse_header_line_without_domain_uses_request_host() {
-        let cookie = Cookie::from_header_line_with_domain("Set-Cookie: sid=xyz; Path=/app", Some("app.example.com")).unwrap();
+        let cookie = Cookie::from_header_line_with_domain(
+            "Set-Cookie: sid=xyz; Path=/app",
+            Some("app.example.com"),
+        )
+        .unwrap();
         assert_eq!(cookie.domain, "app.example.com");
         assert_eq!(cookie.path, "/app");
     }
@@ -845,8 +871,9 @@ mod tests {
 
     #[test]
     fn parse_header_with_set_cookie_prefix() {
-        let cookie = Cookie::from_header_line("Set-Cookie: x=1; Domain=.example.com; Path=/; Secure")
-            .expect("header parse");
+        let cookie =
+            Cookie::from_header_line("Set-Cookie: x=1; Domain=.example.com; Path=/; Secure")
+                .expect("header parse");
 
         assert_eq!(cookie.name, "x");
         assert_eq!(cookie.domain, "example.com");
@@ -896,8 +923,12 @@ mod tests {
         session.add_cookie_with_path("a", "1", "example.com", "/app", false, false);
 
         let settings = SessionSettings::default();
-        assert!(session.cookie_header_for("example.com", "/app", false, &settings).contains("a=1"));
-        assert!(session.cookie_header_for("example.com", "/app/profile", false, &settings).contains("a=1"));
+        assert!(session
+            .cookie_header_for("example.com", "/app", false, &settings)
+            .contains("a=1"));
+        assert!(session
+            .cookie_header_for("example.com", "/app/profile", false, &settings)
+            .contains("a=1"));
         assert!(!session
             .cookie_header_for("example.com", "/application", false, &settings)
             .contains("a=1"));
@@ -909,8 +940,12 @@ mod tests {
         session.add_cookie_with_path("sid", "1", "example.com", "/", false, true);
 
         let settings = SessionSettings::default();
-        assert!(!session.cookie_header_for("example.com", "/", false, &settings).contains("sid=1"));
-        assert!(session.cookie_header_for("example.com", "/", true, &settings).contains("sid=1"));
+        assert!(!session
+            .cookie_header_for("example.com", "/", false, &settings)
+            .contains("sid=1"));
+        assert!(session
+            .cookie_header_for("example.com", "/", true, &settings)
+            .contains("sid=1"));
     }
 
     #[test]
@@ -942,8 +977,16 @@ mod tests {
         assert_eq!(store.len(), 2);
 
         let settings = SessionSettings::default();
-        let admin_cookies = store.get("admin").unwrap().cookie_header_for("target.com", "/", false, &settings);
-        let user_cookies = store.get("user").unwrap().cookie_header_for("target.com", "/", false, &settings);
+        let admin_cookies =
+            store
+                .get("admin")
+                .unwrap()
+                .cookie_header_for("target.com", "/", false, &settings);
+        let user_cookies =
+            store
+                .get("user")
+                .unwrap()
+                .cookie_header_for("target.com", "/", false, &settings);
 
         assert!(admin_cookies.contains("admin-sess"));
         assert!(user_cookies.contains("user-sess"));
@@ -1018,7 +1061,8 @@ mod tests {
         let legacy = serde_json::json!({"sessions":{"legacy":{"name":"legacy","cookies":{}}}});
 
         let mut file = fs::File::create(&path).unwrap();
-        file.write_all(serde_json::to_string(&legacy).unwrap().as_bytes()).unwrap();
+        file.write_all(serde_json::to_string(&legacy).unwrap().as_bytes())
+            .unwrap();
 
         let loaded = SessionStore::load_from_file(&path).unwrap();
         assert_eq!(loaded.len(), 1);
@@ -1084,10 +1128,11 @@ mod tests {
     #[test]
     fn session_store_rejects_oversized_file() {
         let path = temp_path("oversized_store");
-        let oversized = vec![
-            b'a';
-            usize::try_from(MAX_STORE_FILE_BYTES).expect("store size fits in usize") + 1
-        ];
+        let oversized =
+            vec![
+                b'a';
+                usize::try_from(MAX_STORE_FILE_BYTES).expect("store size fits in usize") + 1
+            ];
         fs::write(&path, oversized).unwrap();
 
         let err = SessionStore::load_from_file(&path).unwrap_err();

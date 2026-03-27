@@ -23,7 +23,6 @@
 //! assert!(cookies.contains("PHPSESSID=abc123"));
 //! ```
 
-
 #![warn(missing_docs)]
 #![warn(clippy::pedantic)]
 #![forbid(unsafe_code)]
@@ -31,5 +30,5 @@
 mod csrf;
 mod session;
 
-pub use csrf::{CsrfSource, CsrfToken, extract_csrf_tokens, inject_csrf_token};
+pub use csrf::{extract_csrf_tokens, inject_csrf_token, CsrfSource, CsrfToken};
 pub use session::{AuthJarError, AuthSession, Cookie, SessionSettings, SessionStore};

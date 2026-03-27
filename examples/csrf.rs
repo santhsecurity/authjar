@@ -14,9 +14,7 @@ fn main() {
         </html>
     "#;
 
-    let headers = vec![
-        ("X-CSRF-Token".to_string(), "header-token-3".to_string()),
-    ];
+    let headers = vec![("X-CSRF-Token".to_string(), "header-token-3".to_string())];
     let cookies = vec![("XSRF-TOKEN".to_string(), "cookie-token-4".to_string())];
 
     let tokens = extract_csrf_tokens(html, &headers, &cookies);

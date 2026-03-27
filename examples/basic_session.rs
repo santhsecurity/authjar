@@ -25,5 +25,4 @@ fn main() {
             .expect("session exists")
             .cookie_header_for("api.example.com", "/", false, settings)
     );
-
 }

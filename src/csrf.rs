@@ -45,12 +45,7 @@ const CSRF_COOKIE_NAMES: &[&str] = &[
 ];
 
 /// Well-known CSRF header names.
-const CSRF_HEADER_NAMES: &[&str] = &[
-    "x-csrf-token",
-    "x-xsrf-token",
-    "csrf-token",
-    "x-csrftoken",
-];
+const CSRF_HEADER_NAMES: &[&str] = &["x-csrf-token", "x-xsrf-token", "csrf-token", "x-csrftoken"];
 
 /// Well-known CSRF meta tag / input names.
 const CSRF_HTML_NAMES: &[&str] = &[
@@ -64,8 +59,8 @@ const CSRF_HTML_NAMES: &[&str] = &[
     "_csrf",
 ];
 
-use std::sync::OnceLock;
 use regex::Regex;
+use std::sync::OnceLock;
 
 const MAX_HTML_SCAN_BYTES: usize = 256 * 1024;
 const MAX_TOKEN_NAME_LEN: usize = 128;
