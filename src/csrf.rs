@@ -87,6 +87,35 @@ fn input_regex() -> &'static Regex {
 ///
 /// Searches HTML body, response headers, and cookies for known CSRF patterns.
 /// Returns all discovered tokens, ordered by confidence (HTML > Header > Cookie).
+///
+/// # Parameters
+///
+/// - `html_body`: HTML response body to scan for `<meta>` and `<input>` token fields.
+/// - `response_headers`: Header pairs from the response, usually already normalized
+///   into owned strings.
+/// - `cookies`: Cookie name/value pairs extracted from the response.
+///
+/// # Returns
+///
+/// Returns every discovered [`CsrfToken`] up to an internal cap, ordered by source
+/// confidence.
+///
+/// # Panics
+///
+/// This function does not panic.
+///
+/// # Examples
+///
+/// ```rust
+/// use authjar::{extract_csrf_tokens, CsrfSource};
+///
+/// let html = r#"<meta name="csrf-token" content="abc123">"#;
+/// let tokens = extract_csrf_tokens(html, &[], &[]);
+///
+/// assert_eq!(tokens.len(), 1);
+/// assert_eq!(tokens[0].source, CsrfSource::HtmlTag);
+/// assert_eq!(tokens[0].value, "abc123");
+/// ```
 #[must_use]
 pub fn extract_csrf_tokens(
     html_body: &str,
@@ -213,6 +242,34 @@ fn is_allowed_cookie_name(name: &str) -> bool {
 /// For header-based tokens, returns the same header.
 /// For HTML-based tokens, returns the form field name and value
 /// (caller must add to the request body).
+///
+/// # Parameters
+///
+/// - `token`: Previously discovered token and its source metadata.
+///
+/// # Returns
+///
+/// Returns a `(name, value)` pair suitable for request injection.
+///
+/// # Panics
+///
+/// This function does not panic.
+///
+/// # Examples
+///
+/// ```rust
+/// use authjar::{inject_csrf_token, CsrfSource, CsrfToken};
+///
+/// let token = CsrfToken {
+///     value: "secret".to_string(),
+///     source: CsrfSource::Cookie,
+///     field_name: "XSRF-TOKEN".to_string(),
+/// };
+///
+/// let (name, value) = inject_csrf_token(&token);
+/// assert_eq!(name, "X-XSRF-Token");
+/// assert_eq!(value, "secret");
+/// ```
 #[must_use]
 pub fn inject_csrf_token(token: &CsrfToken) -> (&str, &str) {
     match token.source {
@@ -232,6 +289,8 @@ pub fn inject_csrf_token(token: &CsrfToken) -> (&str, &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::thread;
 
     #[test]
     fn extract_from_meta_tag() {
@@ -303,6 +362,30 @@ mod tests {
     }
 
     #[test]
+    fn inject_html_tag_based() {
+        let token = CsrfToken {
+            value: "form-token".to_string(),
+            source: CsrfSource::HtmlTag,
+            field_name: "_token".to_string(),
+        };
+        let (name, value) = inject_csrf_token(&token);
+        assert_eq!(name, "_token");
+        assert_eq!(value, "form-token");
+    }
+
+    #[test]
+    fn inject_cookie_based_non_xsrf_name_uses_x_csrf_header() {
+        let token = CsrfToken {
+            value: "cookie-token".to_string(),
+            source: CsrfSource::Cookie,
+            field_name: "csrf-token".to_string(),
+        };
+        let (name, value) = inject_csrf_token(&token);
+        assert_eq!(name, "X-CSRF-Token");
+        assert_eq!(value, "cookie-token");
+    }
+
+    #[test]
     fn empty_values_skipped() {
         let cookies = vec![("XSRF-TOKEN".to_string(), String::new())];
         let tokens = extract_csrf_tokens("", &[], &cookies);
@@ -327,5 +410,63 @@ mod tests {
         }
         let tokens = extract_csrf_tokens(&html, &[], &[]);
         assert_eq!(tokens.len(), MAX_EXTRACTED_TOKENS);
+    }
+
+    #[test]
+    fn empty_input_returns_no_tokens() {
+        let tokens = extract_csrf_tokens("", &[], &[]);
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn huge_html_is_truncated_but_still_detects_first_token() {
+        let mut html = String::new();
+        html.push_str(r#"<meta name="csrf-token" content="first">"#);
+        html.push_str(&"x".repeat(MAX_HTML_SCAN_BYTES + 4096));
+        html.push_str(r#"<meta name="csrf-token" content="last">"#);
+        let tokens = extract_csrf_tokens(&html, &[], &[]);
+        assert!(!tokens.is_empty());
+        assert_eq!(tokens[0].value, "first");
+    }
+
+    #[test]
+    fn null_bytes_in_values_are_rejected() {
+        let headers = vec![("X-CSRF-Token".to_string(), "a\0b".to_string())];
+        let cookies = vec![("XSRF-TOKEN".to_string(), "a\0b".to_string())];
+        let tokens = extract_csrf_tokens("", &headers, &cookies);
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn unicode_values_are_rejected_gracefully() {
+        let headers = vec![("X-CSRF-Token".to_string(), "こんにちは".to_string())];
+        let cookies = vec![("XSRF-TOKEN".to_string(), "你好".to_string())];
+        let tokens = extract_csrf_tokens("", &headers, &cookies);
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn invalid_header_and_cookie_names_are_ignored() {
+        let headers = vec![("X CSRf Token".to_string(), "ok".to_string())];
+        let cookies = vec![("csrf token".to_string(), "ok".to_string())];
+        let tokens = extract_csrf_tokens("", &headers, &cookies);
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn concurrent_extraction_is_consistent() {
+        let html = Arc::new(r#"<meta name="csrf-token" content="meta">"#.to_string());
+        let mut handles = Vec::new();
+        for _ in 0..12 {
+            let html = Arc::clone(&html);
+            handles.push(thread::spawn(move || {
+                let headers = vec![("X-CSRF-Token".to_string(), "h".to_string())];
+                let cookies = vec![("XSRF-TOKEN".to_string(), "c".to_string())];
+                extract_csrf_tokens(&html, &headers, &cookies).len()
+            }));
+        }
+        for handle in handles {
+            assert_eq!(handle.join().unwrap(), 3);
+        }
     }
 }

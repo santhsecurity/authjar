@@ -63,8 +63,21 @@ impl Default for SessionSettings {
 
 impl SessionSettings {
     /// Create settings from a TOML string.
+    ///
+    /// # Parameters
+    ///
+    /// - `value`: TOML text describing [`SessionSettings`].
+    ///
+    /// # Returns
+    ///
+    /// Returns validated settings parsed from `value`.
+    ///
     /// # Errors
-    /// Returns `AuthJarError` if parsing fails.
+    /// Returns `AuthJarError` if parsing or validation fails.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     pub fn from_toml_str(value: &str) -> Result<Self, AuthJarError> {
         let settings: Self = toml::from_str(value)?;
         settings.validate()?;
@@ -72,16 +85,54 @@ impl SessionSettings {
     }
 
     /// Load settings from a TOML file.
+    ///
+    /// # Parameters
+    ///
+    /// - `path`: TOML file path to read.
+    ///
+    /// # Returns
+    ///
+    /// Returns validated settings loaded from disk.
+    ///
     /// # Errors
-    /// Returns `AuthJarError` if the file cannot be read or parsed.
+    /// Returns `AuthJarError` if the file cannot be read, parsed, or validated.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     pub fn from_toml_file(path: impl AsRef<Path>) -> Result<Self, AuthJarError> {
         let raw = fs::read_to_string(path)?;
         Self::from_toml_str(&raw)
     }
 
     /// Persist settings to a TOML file.
+    ///
+    /// # Parameters
+    ///
+    /// - `path`: Destination file path.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` after successful validation and write.
+    ///
     /// # Errors
-    /// Returns `AuthJarError` if saving fails.
+    /// Returns `AuthJarError` if validation, serialization, or writing fails.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use authjar::SessionSettings;
+    ///
+    /// let path = std::env::temp_dir().join("authjar-settings-doc.toml");
+    ///
+    /// SessionSettings::default().save_to_toml_file(&path).unwrap();
+    /// assert!(path.exists());
+    /// std::fs::remove_file(path).ok();
+    /// ```
     pub fn save_to_toml_file(&self, path: impl AsRef<Path>) -> Result<(), AuthJarError> {
         self.validate()?;
         let rendered = toml::to_string_pretty(self)?;
@@ -116,7 +167,21 @@ pub struct Cookie {
 }
 
 impl Cookie {
-    /// Create a new cookie with defaults.
+    /// Creates a cookie with a normalized domain, path `/`, and both flags disabled.
+    ///
+    /// # Parameters
+    ///
+    /// - `name`: Cookie name.
+    /// - `value`: Cookie value.
+    /// - `domain`: Cookie domain, normalized to lowercase without leading dots.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new [`Cookie`] with default path and flags.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[must_use]
     pub fn new(
         name: impl Into<String>,
@@ -137,6 +202,34 @@ impl Cookie {
     ///
     /// The parser accepts both raw cookie pairs (`session=abc`) and full Set-Cookie
     /// lines (`Set-Cookie: session=abc; Path=/; HttpOnly`).
+    /// # Parameters
+    ///
+    /// - `line`: Raw `Cookie` or `Set-Cookie` style header line.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(cookie)` when parsing succeeds and all normalized fields pass
+    /// validation, otherwise `None`.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use authjar::Cookie;
+    ///
+    /// let cookie = Cookie::from_header_line_with_domain(
+    ///     "Set-Cookie: sid=abc; Path=/app",
+    ///     Some("app.example.com"),
+    /// )
+    /// .unwrap();
+    ///
+    /// assert_eq!(cookie.name, "sid");
+    /// assert_eq!(cookie.domain, "app.example.com");
+    /// assert_eq!(cookie.path, "/app");
+    /// ```
     #[must_use]
     pub fn from_header_line(line: &str) -> Option<Self> {
         Self::from_header_line_with_domain(line, None)
@@ -146,6 +239,18 @@ impl Cookie {
     ///
     /// When the cookie omits the `Domain` attribute, RFC 6265 defaults it to the
     /// request host that received the `Set-Cookie` header.
+    /// # Parameters
+    ///
+    /// - `line`: Raw header line to parse.
+    /// - `default_domain`: Domain to use when the cookie omits `Domain=`.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(cookie)` when parsing and validation succeed, otherwise `None`.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[must_use]
     pub fn from_header_line_with_domain(line: &str, default_domain: Option<&str>) -> Option<Self> {
         let line = line.trim();
@@ -220,13 +325,39 @@ impl Cookie {
         Some(cookie)
     }
 
-    /// Parse a Set-Cookie value using an explicit fallback domain.
+    /// Parses a `Set-Cookie` value while supplying an explicit fallback domain.
+    ///
+    /// # Parameters
+    ///
+    /// - `header_value`: Raw `Set-Cookie` value or line.
+    /// - `default_domain`: Domain to apply when the cookie omits `Domain=`.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(cookie)` when the cookie is valid, otherwise `None`.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[must_use]
     pub fn from_set_cookie(header_value: &str, default_domain: &str) -> Option<Self> {
         Self::from_header_line_with_domain(header_value, Some(default_domain))
     }
 
-    /// Render this cookie as a `Set-Cookie` header value.
+    /// Renders this cookie as a `Set-Cookie` header value.
+    ///
+    /// # Parameters
+    ///
+    /// This function takes no additional parameters.
+    ///
+    /// # Returns
+    ///
+    /// Returns a serialized `Set-Cookie` string including `Domain`, `Path`, and any
+    /// enabled flags.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[must_use]
     pub fn to_set_cookie_string(&self) -> String {
         let mut parts = vec![
@@ -276,7 +407,19 @@ pub struct AuthSession {
 }
 
 impl AuthSession {
-    /// Create a new empty session.
+    /// Creates a new empty named authentication session.
+    ///
+    /// # Parameters
+    ///
+    /// - `name`: Session name used as the store key.
+    ///
+    /// # Returns
+    ///
+    /// Returns an empty [`AuthSession`].
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[must_use]
     pub fn new(name: impl Into<String>) -> Self {
         Self {
@@ -285,7 +428,24 @@ impl AuthSession {
         }
     }
 
-    /// Add a plain cookie with default path `/`.
+    /// Adds or replaces a plain cookie using the default path `/`.
+    ///
+    /// Invalid inputs are rejected silently with a warning instead of returning an
+    /// error, which keeps session mutation ergonomic for best-effort ingestion.
+    ///
+    /// # Parameters
+    ///
+    /// - `name`: Cookie name.
+    /// - `value`: Cookie value.
+    /// - `domain`: Cookie domain.
+    ///
+    /// # Returns
+    ///
+    /// This function returns no value.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     pub fn add_cookie(
         &mut self,
         name: impl Into<String>,
@@ -295,7 +455,27 @@ impl AuthSession {
         self.add_cookie_with_path(name, value, domain, "/", false, false);
     }
 
-    /// Add a cookie with explicit path and security metadata.
+    /// Adds or replaces a cookie with explicit scope and security metadata.
+    ///
+    /// Invalid cookies or sessions that exceed the per-session limit are rejected
+    /// and logged instead of causing an error.
+    ///
+    /// # Parameters
+    ///
+    /// - `name`: Cookie name.
+    /// - `value`: Cookie value.
+    /// - `domain`: Cookie domain.
+    /// - `path`: Cookie path scope.
+    /// - `http_only`: Whether the cookie should be marked HTTP-only.
+    /// - `secure`: Whether the cookie should be sent only over secure contexts.
+    ///
+    /// # Returns
+    ///
+    /// This function returns no value.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     pub fn add_cookie_with_path(
         &mut self,
         name: impl Into<String>,
@@ -327,7 +507,20 @@ impl AuthSession {
         self.cookies.insert(key, cookie);
     }
 
-    /// Add a cookie parsed from a Set-Cookie header value.
+    /// Parses and adds a cookie from a `Set-Cookie` value using a fallback domain.
+    ///
+    /// # Parameters
+    ///
+    /// - `header_value`: Raw `Set-Cookie` value or line.
+    /// - `default_domain`: Domain to use when `Domain=` is absent.
+    ///
+    /// # Returns
+    ///
+    /// This function returns no value.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     pub fn add_set_cookie(&mut self, header_value: &str, default_domain: &str) {
         if let Some(cookie) = Cookie::from_set_cookie(header_value, default_domain) {
             let key = cookie.key();
@@ -335,7 +528,19 @@ impl AuthSession {
         }
     }
 
-    /// Add a cookie from a raw header line.
+    /// Parses and adds a cookie from a raw header line without a fallback domain.
+    ///
+    /// # Parameters
+    ///
+    /// - `line`: Raw cookie or `Set-Cookie` line.
+    ///
+    /// # Returns
+    ///
+    /// This function returns no value.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     pub fn add_cookie_header_line(&mut self, line: &str) {
         if let Some(cookie) = Cookie::from_header_line(line) {
             let key = cookie.key();
@@ -345,6 +550,19 @@ impl AuthSession {
 
     /// Add a cookie from a raw header line, defaulting a missing Domain attribute
     /// to the request host that produced the header.
+    ///
+    /// # Parameters
+    ///
+    /// - `line`: Raw cookie or `Set-Cookie` line.
+    /// - `request_host`: Host to use when the cookie omits `Domain=`.
+    ///
+    /// # Returns
+    ///
+    /// This function returns no value.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     pub fn add_cookie_header_line_for_host(&mut self, line: &str, request_host: &str) {
         if let Some(cookie) = Cookie::from_header_line_with_domain(line, Some(request_host)) {
             let key = cookie.key();
@@ -352,13 +570,53 @@ impl AuthSession {
         }
     }
 
-    /// Collect cookies for the given domain as a `Cookie` header value.
+    /// Collects matching cookies for `domain` as a `Cookie` header string.
+    ///
+    /// # Parameters
+    ///
+    /// - `domain`: Request host whose cookies should be selected.
+    /// - `settings`: Matching rules that control default path and subdomain reuse.
+    ///
+    /// # Returns
+    ///
+    /// Returns a stable, sorted `Cookie` header string.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use authjar::{AuthSession, SessionSettings};
+    ///
+    /// let mut session = AuthSession::new("admin");
+    /// session.add_cookie("sid", "abc", "example.com");
+    ///
+    /// let header = session.cookie_header("example.com", &SessionSettings::default());
+    /// assert_eq!(header, "sid=abc");
+    /// ```
     #[must_use]
     pub fn cookie_header(&self, domain: &str, settings: &SessionSettings) -> String {
         self.cookie_header_for(domain, "/", false, settings)
     }
 
-    /// Collect cookies for a specific request context.
+    /// Collects cookies for a full request context including path and transport security.
+    ///
+    /// # Parameters
+    ///
+    /// - `domain`: Request host.
+    /// - `path`: Request path.
+    /// - `is_secure`: Whether the request uses a secure transport such as HTTPS.
+    /// - `settings`: Cookie matching behavior.
+    ///
+    /// # Returns
+    ///
+    /// Returns a sorted `Cookie` header string containing only matching cookies.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[must_use]
     pub fn cookie_header_for(
         &self,
@@ -378,7 +636,22 @@ impl AuthSession {
         values.join("; ")
     }
 
-    /// Return the matching cookies as tuples for programmatic clients.
+    /// Returns matching cookies as borrowed name/value tuples for programmatic use.
+    ///
+    /// # Parameters
+    ///
+    /// - `domain`: Request host.
+    /// - `path`: Request path.
+    /// - `is_secure`: Whether the request is secure.
+    /// - `settings`: Cookie matching behavior.
+    ///
+    /// # Returns
+    ///
+    /// Returns every cookie that would be sent for the request context.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[must_use]
     pub fn cookies_for_domain(
         &self,
@@ -394,19 +667,56 @@ impl AuthSession {
             .collect()
     }
 
-    /// Check whether this session is empty.
+    /// Reports whether the session currently contains any cookies.
+    ///
+    /// # Parameters
+    ///
+    /// This function takes no additional parameters.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` when the session contains zero cookies.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.cookies.is_empty()
     }
 
-    /// Number of cookies in this session.
+    /// Returns the total number of cookies stored in this session.
+    ///
+    /// # Parameters
+    ///
+    /// This function takes no additional parameters.
+    ///
+    /// # Returns
+    ///
+    /// Returns the number of stored cookies.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[must_use]
     pub fn cookie_count(&self) -> usize {
         self.cookies.len()
     }
 
-    /// Count entries for a given domain for quick checks.
+    /// Counts cookies that would match a request to `domain` using default path `/`.
+    ///
+    /// # Parameters
+    ///
+    /// - `domain`: Request host to test.
+    /// - `settings`: Matching behavior.
+    ///
+    /// # Returns
+    ///
+    /// Returns the number of matching cookies.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[must_use]
     pub fn cookie_count_for_domain(&self, domain: &str, settings: &SessionSettings) -> usize {
         self.cookies_for_domain(domain, "/", false, settings).len()
@@ -423,13 +733,37 @@ pub struct SessionStore {
 }
 
 impl SessionStore {
-    /// Create an empty session store.
+    /// Creates an empty session store with default matching settings.
+    ///
+    /// # Parameters
+    ///
+    /// This function takes no additional parameters.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new empty [`SessionStore`].
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Create a session store with explicit settings.
+    /// Creates an empty session store with caller-supplied settings.
+    ///
+    /// # Parameters
+    ///
+    /// - `settings`: Matching configuration to apply to the store.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new [`SessionStore`] using `settings`.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[must_use]
     pub fn with_settings(settings: SessionSettings) -> Self {
         Self {
@@ -438,20 +772,73 @@ impl SessionStore {
         }
     }
 
-    /// Snapshot of session settings.
+    /// Returns an immutable reference to the store's session settings.
+    ///
+    /// # Parameters
+    ///
+    /// This function takes no additional parameters.
+    ///
+    /// # Returns
+    ///
+    /// Returns the current [`SessionSettings`].
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[must_use]
     pub fn settings(&self) -> &SessionSettings {
         &self.settings
     }
 
-    /// Mutable session settings.
+    /// Returns a mutable reference to the store's session settings.
+    ///
+    /// # Parameters
+    ///
+    /// This function takes no additional parameters.
+    ///
+    /// # Returns
+    ///
+    /// Returns a mutable [`SessionSettings`] reference for in-place updates.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     pub fn settings_mut(&mut self) -> &mut SessionSettings {
         &mut self.settings
     }
 
     /// Persist the whole store as JSON.
+    ///
+    /// # Parameters
+    ///
+    /// - `path`: Destination JSON file path.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` after validating and writing the store.
+    ///
     /// # Errors
     /// Returns `AuthJarError` if saving to file fails.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use authjar::{AuthSession, SessionStore};
+    ///
+    /// let path = std::env::temp_dir().join("authjar-sessions-doc.json");
+    ///
+    /// let mut store = SessionStore::new();
+    /// store.add(AuthSession::new("admin"));
+    /// store.save_to_file(&path).unwrap();
+    ///
+    /// let loaded = SessionStore::load_from_file(&path).unwrap();
+    /// assert_eq!(loaded.len(), 1);
+    /// std::fs::remove_file(path).ok();
+    /// ```
     pub fn save_to_file(&self, path: impl AsRef<Path>) -> Result<(), AuthJarError> {
         self.validate()?;
         tracing::warn!("authjar session persistence is plaintext JSON; protect the file with OS-level encryption or a secret store");
@@ -461,8 +848,21 @@ impl SessionStore {
     }
 
     /// Persist the whole store as JSON using async filesystem APIs.
+    ///
+    /// # Parameters
+    ///
+    /// - `path`: Destination JSON file path.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` after validating, serializing, and writing the store.
+    ///
     /// # Errors
     /// Returns `AuthJarError` if serialization or async file writing fails.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[cfg(feature = "tokio")]
     pub async fn save_to_file_async(&self, path: impl AsRef<Path>) -> Result<(), AuthJarError> {
         self.validate()?;
@@ -473,8 +873,21 @@ impl SessionStore {
     }
 
     /// Load a store from JSON.
+    ///
+    /// # Parameters
+    ///
+    /// - `path`: JSON file path to read.
+    ///
+    /// # Returns
+    ///
+    /// Returns the validated [`SessionStore`] loaded from disk.
+    ///
     /// # Errors
     /// Returns `AuthJarError` if loading from file fails.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     pub fn load_from_file(path: impl AsRef<Path>) -> Result<Self, AuthJarError> {
         let metadata = fs::metadata(path.as_ref())?;
         if metadata.len() > MAX_STORE_FILE_BYTES {
@@ -491,8 +904,21 @@ impl SessionStore {
     }
 
     /// Load a store from JSON using async filesystem APIs.
+    ///
+    /// # Parameters
+    ///
+    /// - `path`: JSON file path to read.
+    ///
+    /// # Returns
+    ///
+    /// Returns the validated [`SessionStore`] loaded asynchronously from disk.
+    ///
     /// # Errors
     /// Returns `AuthJarError` if async file reading, deserialization, or validation fails.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[cfg(feature = "tokio")]
     pub async fn load_from_file_async(path: impl AsRef<Path>) -> Result<Self, AuthJarError> {
         let metadata = tokio::fs::metadata(path.as_ref()).await?;
@@ -509,7 +935,21 @@ impl SessionStore {
         Ok(store)
     }
 
-    /// Add or replace a session.
+    /// Adds or replaces a session by name.
+    ///
+    /// New sessions that would exceed the store limit are rejected and logged.
+    ///
+    /// # Parameters
+    ///
+    /// - `session`: Session to insert.
+    ///
+    /// # Returns
+    ///
+    /// This function returns no value.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     pub fn add(&mut self, session: AuthSession) {
         if !self.sessions.contains_key(&session.name)
             && self.sessions.len() >= MAX_SESSIONS_PER_STORE
@@ -520,7 +960,22 @@ impl SessionStore {
         self.sessions.insert(session.name.clone(), session);
     }
 
-    /// Add a cookie to a session by name.
+    /// Adds a plain cookie to a named session, creating the session if needed.
+    ///
+    /// # Parameters
+    ///
+    /// - `session_name`: Target session name.
+    /// - `cookie_name`: Cookie name.
+    /// - `cookie_value`: Cookie value.
+    /// - `cookie_domain`: Cookie domain.
+    ///
+    /// # Returns
+    ///
+    /// This function returns no value.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     pub fn add_cookie_to_session(
         &mut self,
         session_name: &str,
@@ -544,7 +999,21 @@ impl SessionStore {
         entry.add_cookie(cookie_name, cookie_value, cookie_domain);
     }
 
-    /// Add a parsed Set-Cookie line to a session by name.
+    /// Parses and adds a `Set-Cookie` line to a named session.
+    ///
+    /// # Parameters
+    ///
+    /// - `session_name`: Target session name.
+    /// - `header_value`: Raw `Set-Cookie` value or line.
+    /// - `default_domain`: Fallback domain for cookies without `Domain=`.
+    ///
+    /// # Returns
+    ///
+    /// This function returns no value.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     pub fn add_set_cookie_to_session(
         &mut self,
         session_name: &str,
@@ -567,18 +1036,54 @@ impl SessionStore {
         entry.add_set_cookie(header_value, default_domain);
     }
 
-    /// Get a session by name.
+    /// Looks up a session by name.
+    ///
+    /// # Parameters
+    ///
+    /// - `name`: Session name to retrieve.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(&AuthSession)` when the session exists, otherwise `None`.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&AuthSession> {
         self.sessions.get(name)
     }
 
-    /// Get a mutable session by name.
+    /// Looks up a mutable session by name.
+    ///
+    /// # Parameters
+    ///
+    /// - `name`: Session name to retrieve.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(&mut AuthSession)` when the session exists, otherwise `None`.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     pub fn get_mut(&mut self, name: &str) -> Option<&mut AuthSession> {
         self.sessions.get_mut(name)
     }
 
-    /// List all session names, sorted for stable output.
+    /// Lists all session names in sorted order.
+    ///
+    /// # Parameters
+    ///
+    /// This function takes no additional parameters.
+    ///
+    /// # Returns
+    ///
+    /// Returns sorted session names as borrowed `&str` values.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[must_use]
     pub fn names(&self) -> Vec<&str> {
         let mut names: Vec<_> = self.sessions.keys().map(String::as_str).collect();
@@ -586,13 +1091,37 @@ impl SessionStore {
         names
     }
 
-    /// Number of sessions in this store.
+    /// Returns the number of sessions currently stored.
+    ///
+    /// # Parameters
+    ///
+    /// This function takes no additional parameters.
+    ///
+    /// # Returns
+    ///
+    /// Returns the number of sessions.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[must_use]
     pub fn len(&self) -> usize {
         self.sessions.len()
     }
 
-    /// Whether this store is empty.
+    /// Reports whether the store currently contains zero sessions.
+    ///
+    /// # Parameters
+    ///
+    /// This function takes no additional parameters.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` when the store is empty.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.sessions.is_empty()
@@ -743,6 +1272,8 @@ fn path_matches(request_path: &str, cookie_path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
     use std::{env, fs, io::Write, path::PathBuf};
 
@@ -893,6 +1424,50 @@ mod tests {
     }
 
     #[test]
+    fn cookie_new_normalizes_domain_and_defaults() {
+        let cookie = Cookie::new("sid", "v", ".EXAMPLE.com.");
+        assert_eq!(cookie.domain, "example.com");
+        assert_eq!(cookie.path, "/");
+        assert!(!cookie.http_only);
+        assert!(!cookie.secure);
+    }
+
+    #[test]
+    fn parse_header_line_with_unknown_attribute_rejected() {
+        assert!(Cookie::from_header_line_with_domain(
+            "Set-Cookie: sid=1; Path=/; SameSite=Lax",
+            Some("example.com")
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn parse_header_line_with_empty_path_defaults_to_root() {
+        let cookie = Cookie::from_header_line_with_domain(
+            "Set-Cookie: sid=1; Path=; Domain=example.com",
+            None,
+        )
+        .unwrap();
+        assert_eq!(cookie.path, "/");
+    }
+
+    #[test]
+    fn parse_header_line_rejects_null_byte_in_value() {
+        assert!(
+            Cookie::from_header_line_with_domain("Set-Cookie: sid=ab\0cd", Some("example.com"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn parse_header_line_rejects_unicode_cookie_value() {
+        assert!(
+            Cookie::from_header_line_with_domain("Set-Cookie: sid=こんにちは", Some("example.com"))
+                .is_none()
+        );
+    }
+
+    #[test]
     fn add_cookie_rejects_invalid_inputs() {
         let mut session = AuthSession::new("invalid");
         session.add_cookie_with_path("bad name", "value", "bad domain", "relative", false, false);
@@ -904,6 +1479,65 @@ mod tests {
         let mut session = AuthSession::new("invalid-value");
         session.add_cookie("sid", "a\r\nSet-Cookie: hacked=1", "example.com");
         assert!(session.is_empty());
+    }
+
+    #[test]
+    fn add_cookie_rejects_empty_inputs() {
+        let mut session = AuthSession::new("empty");
+        session.add_cookie("", "", "");
+        assert!(session.is_empty());
+    }
+
+    #[test]
+    fn add_cookie_rejects_huge_value() {
+        let mut session = AuthSession::new("huge");
+        let huge_value = "a".repeat(MAX_COOKIE_VALUE_LEN + 1);
+        session.add_cookie("sid", huge_value, "example.com");
+        assert!(session.is_empty());
+    }
+
+    #[test]
+    fn add_cookie_header_line_for_host_adds_cookie_without_domain_attr() {
+        let mut session = AuthSession::new("host-fallback");
+        session.add_cookie_header_line_for_host("Set-Cookie: sid=1; Path=/app", "api.example.com");
+        let cookies = session.cookie_header_for(
+            "api.example.com",
+            "/app/dashboard",
+            false,
+            &SessionSettings::default(),
+        );
+        assert!(cookies.contains("sid=1"));
+    }
+
+    #[test]
+    fn add_cookie_header_line_without_domain_does_not_add_cookie() {
+        let mut session = AuthSession::new("missing-domain");
+        session.add_cookie_header_line("Set-Cookie: sid=1; Path=/");
+        assert!(session.is_empty());
+    }
+
+    #[test]
+    fn cookies_for_domain_returns_only_matches() {
+        let mut session = AuthSession::new("tuples");
+        session.add_cookie_with_path("a", "1", "example.com", "/app", false, false);
+        session.add_cookie_with_path("b", "2", "other.com", "/", false, false);
+        let matched = session.cookies_for_domain("example.com", "/app/x", false, &SessionSettings::default());
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0], ("a", "1"));
+    }
+
+    #[test]
+    fn cookie_count_for_domain_uses_default_path_and_security_context() {
+        let mut session = AuthSession::new("count");
+        session.add_cookie_with_path("a", "1", "example.com", "/app", false, false);
+        assert_eq!(
+            session.cookie_count_for_domain("example.com", &SessionSettings::default()),
+            0
+        );
+        assert_eq!(
+            session.cookies_for_domain("example.com", "/app", false, &SessionSettings::default()).len(),
+            1
+        );
     }
 
     #[test]
@@ -1034,6 +1668,57 @@ mod tests {
     }
 
     #[test]
+    fn session_store_settings_accessors_work() {
+        let mut store = SessionStore::new();
+        assert_eq!(store.settings().default_path, "/");
+        store.settings_mut().default_path = "/api".to_string();
+        assert_eq!(store.settings().default_path, "/api");
+    }
+
+    #[test]
+    fn session_store_add_cookie_to_session_creates_session() {
+        let mut store = SessionStore::new();
+        store.add_cookie_to_session("worker", "sid", "1", "example.com");
+        assert_eq!(store.len(), 1);
+        assert!(store.get("worker").is_some());
+    }
+
+    #[test]
+    fn session_store_add_set_cookie_to_session_creates_session() {
+        let mut store = SessionStore::new();
+        store.add_set_cookie_to_session("worker", "sid=1; Path=/", "example.com");
+        assert_eq!(store.len(), 1);
+        let header = store
+            .get("worker")
+            .unwrap()
+            .cookie_header("example.com", &SessionSettings::default());
+        assert!(header.contains("sid=1"));
+    }
+
+    #[test]
+    fn session_store_get_mut_can_modify_session() {
+        let mut store = SessionStore::new();
+        store.add(AuthSession::new("mutable"));
+        store
+            .get_mut("mutable")
+            .unwrap()
+            .add_cookie("sid", "1", "example.com");
+        assert!(store
+            .get("mutable")
+            .unwrap()
+            .cookie_header("example.com", &SessionSettings::default())
+            .contains("sid=1"));
+    }
+
+    #[test]
+    fn session_store_is_empty_tracks_state() {
+        let mut store = SessionStore::new();
+        assert!(store.is_empty());
+        store.add(AuthSession::new("a"));
+        assert!(!store.is_empty());
+    }
+
+    #[test]
     fn session_store_save_and_load_file() {
         let path = temp_path("session_store");
         let mut store = SessionStore::new();
@@ -1107,6 +1792,64 @@ mod tests {
     fn session_settings_reject_invalid_default_path() {
         let err = SessionSettings::from_toml_str("default_path = 'relative'").unwrap_err();
         assert!(err.to_string().contains("invalid cookie path"));
+    }
+
+    #[test]
+    fn session_settings_reject_unicode_default_domain() {
+        let err = SessionSettings::from_toml_str("default_domain = 'éxample.com'").unwrap_err();
+        assert!(err.to_string().contains("invalid cookie domain"));
+    }
+
+    #[test]
+    fn session_settings_from_toml_file_errors_for_missing_path() {
+        let path = temp_path("settings_missing");
+        let err = SessionSettings::from_toml_file(&path).unwrap_err();
+        assert!(matches!(err, AuthJarError::Io(_)));
+    }
+
+    #[test]
+    fn concurrent_store_access_via_mutex_is_stable() {
+        let store = Arc::new(Mutex::new(SessionStore::new()));
+        let mut handles = Vec::new();
+
+        for i in 0..8 {
+            let store = Arc::clone(&store);
+            handles.push(thread::spawn(move || {
+                for j in 0..32 {
+                    let mut guard = store.lock().unwrap();
+                    guard.add_cookie_to_session(
+                        &format!("s{i}"),
+                        format!("k{j}"),
+                        format!("v{j}"),
+                        "example.com",
+                    );
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let guard = store.lock().unwrap();
+        assert_eq!(guard.len(), 8);
+        for i in 0..8 {
+            assert_eq!(
+                guard
+                    .get(&format!("s{i}"))
+                    .unwrap()
+                    .cookie_count(),
+                32
+            );
+        }
+    }
+
+    #[test]
+    fn save_to_file_returns_io_error_for_invalid_path() {
+        let mut store = SessionStore::new();
+        store.add(AuthSession::new("x"));
+        let err = store.save_to_file("/proc/authjar-should-fail/session.json").unwrap_err();
+        assert!(matches!(err, AuthJarError::Io(_)));
     }
 
     #[cfg(feature = "tokio")]
