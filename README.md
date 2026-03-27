@@ -2,6 +2,8 @@
 
 Multi-session cookie management. Parse Set-Cookie headers, store cookies with domain and path scoping, match cookies to requests, and persist sessions to JSON. Includes CSRF token extraction and injection helpers.
 
+Warning: `SessionStore::save_to_file` writes plaintext session material. Use filesystem encryption, a protected secrets store, or wrap persistence with your own encryption before storing production credentials.
+
 ```rust
 use authjar::{AuthSession, Cookie, SessionStore, SessionSettings};
 
@@ -60,6 +62,10 @@ let cookie = Cookie::from_set_cookie(
 assert_eq!(cookie.name, "session");
 assert!(cookie.http_only);
 assert!(cookie.secure);
+assert_eq!(
+    cookie.to_set_cookie_string(),
+    "session=abc; Domain=example.com; Path=/; HttpOnly; Secure"
+);
 ```
 
 Parse raw header lines:
@@ -68,6 +74,16 @@ Parse raw header lines:
 let cookie = Cookie::from_header_line(
     "Set-Cookie: token=xyz; Domain=api.example.com"
 ).unwrap();
+```
+
+When the header omits `Domain`, pass the request host so host-only cookies are scoped correctly:
+
+```rust
+let cookie = Cookie::from_header_line_with_domain(
+    "Set-Cookie: token=xyz; Path=/api",
+    Some("api.example.com")
+).unwrap();
+assert_eq!(cookie.domain, "api.example.com");
 ```
 
 ## Domain and path scoping

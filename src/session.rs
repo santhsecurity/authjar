@@ -139,6 +139,15 @@ impl Cookie {
     /// lines (`Set-Cookie: session=abc; Path=/; HttpOnly`).
     #[must_use]
     pub fn from_header_line(line: &str) -> Option<Self> {
+        Self::from_header_line_with_domain(line, None)
+    }
+
+    /// Parse an arbitrary cookie header line with an optional fallback request host.
+    ///
+    /// When the cookie omits the `Domain` attribute, RFC 6265 defaults it to the
+    /// request host that received the `Set-Cookie` header.
+    #[must_use]
+    pub fn from_header_line_with_domain(line: &str, default_domain: Option<&str>) -> Option<Self> {
         let line = line.trim();
         let value = match line.split_once(':') {
             Some((name, rest)) if name.eq_ignore_ascii_case("set-cookie") => rest.trim(),
@@ -202,21 +211,38 @@ impl Cookie {
             }
         }
 
+        if cookie.domain.is_empty() {
+            let default_domain = normalize_domain(default_domain.unwrap_or_default());
+            if validate_domain(&default_domain).is_err() {
+                return None;
+            }
+            cookie.domain = default_domain;
+        }
+
         Some(cookie)
     }
 
     /// Parse a Set-Cookie value using an explicit fallback domain.
     #[must_use]
     pub fn from_set_cookie(header_value: &str, default_domain: &str) -> Option<Self> {
-        let mut cookie = Self::from_header_line(header_value)?;
-        if cookie.domain.is_empty() {
-            cookie.domain = normalize_domain(default_domain);
-            if validate_domain(&cookie.domain).is_err() {
-                return None;
-            }
-        }
+        Self::from_header_line_with_domain(header_value, Some(default_domain))
+    }
 
-        Some(cookie)
+    /// Render this cookie as a `Set-Cookie` header value.
+    #[must_use]
+    pub fn to_set_cookie_string(&self) -> String {
+        let mut parts = vec![
+            format!("{}={}", self.name, self.value),
+            format!("Domain={}", self.domain),
+            format!("Path={}", self.path),
+        ];
+        if self.http_only {
+            parts.push("HttpOnly".to_string());
+        }
+        if self.secure {
+            parts.push("Secure".to_string());
+        }
+        parts.join("; ")
     }
 
     fn key(&self) -> String {
@@ -238,13 +264,7 @@ impl Cookie {
             return false;
         }
 
-        let request_path = if request_path.is_empty() { "/" } else { request_path };
-        if self.path == "/" {
-            return true;
-        }
-
-        request_path == self.path
-            || request_path.starts_with(&format!("{}/", self.path))
+        path_matches(request_path, &self.path)
     }
 }
 
@@ -315,6 +335,15 @@ impl AuthSession {
     /// Add a cookie from a raw header line.
     pub fn add_cookie_header_line(&mut self, line: &str) {
         if let Some(cookie) = Cookie::from_header_line(line) {
+            let key = cookie.key();
+            self.cookies.insert(key, cookie);
+        }
+    }
+
+    /// Add a cookie from a raw header line, defaulting a missing Domain attribute
+    /// to the request host that produced the header.
+    pub fn add_cookie_header_line_for_host(&mut self, line: &str, request_host: &str) {
+        if let Some(cookie) = Cookie::from_header_line_with_domain(line, Some(request_host)) {
             let key = cookie.key();
             self.cookies.insert(key, cookie);
         }
@@ -422,6 +451,7 @@ impl SessionStore {
     /// Returns `AuthJarError` if saving to file fails.
     pub fn save_to_file(&self, path: impl AsRef<Path>) -> Result<(), AuthJarError> {
         self.validate()?;
+        tracing::warn!("authjar session persistence is plaintext JSON; protect the file with OS-level encryption or a secret store");
         let payload = serde_json::to_string_pretty(self)?;
         fs::write(path, payload)?;
         Ok(())
@@ -433,6 +463,7 @@ impl SessionStore {
     #[cfg(feature = "tokio")]
     pub async fn save_to_file_async(&self, path: impl AsRef<Path>) -> Result<(), AuthJarError> {
         self.validate()?;
+        tracing::warn!("authjar session persistence is plaintext JSON; protect the file with OS-level encryption or a secret store");
         let payload = serde_json::to_string_pretty(self)?;
         tokio::fs::write(path, payload).await?;
         Ok(())
@@ -669,6 +700,25 @@ fn domain_matches(request_domain: &str, cookie_domain: &str, include_subdomains:
     request_domain.ends_with(&format!(".{cookie_domain}"))
 }
 
+fn path_matches(request_path: &str, cookie_path: &str) -> bool {
+    let request_path = if request_path.is_empty() { "/" } else { request_path };
+    if cookie_path == "/" {
+        return true;
+    }
+    if request_path == cookie_path {
+        return true;
+    }
+    if !request_path.starts_with(cookie_path) {
+        return false;
+    }
+
+    cookie_path.ends_with('/')
+        || request_path
+            .as_bytes()
+            .get(cookie_path.len())
+            .is_some_and(|byte| *byte == b'/')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -767,6 +817,13 @@ mod tests {
     }
 
     #[test]
+    fn parse_header_line_without_domain_uses_request_host() {
+        let cookie = Cookie::from_header_line_with_domain("Set-Cookie: sid=xyz; Path=/app", Some("app.example.com")).unwrap();
+        assert_eq!(cookie.domain, "app.example.com");
+        assert_eq!(cookie.path, "/app");
+    }
+
+    #[test]
     fn parse_set_cookie_fails_without_domain() {
         assert!(Cookie::from_set_cookie("sid=1", "").is_none());
     }
@@ -854,6 +911,19 @@ mod tests {
         let settings = SessionSettings::default();
         assert!(!session.cookie_header_for("example.com", "/", false, &settings).contains("sid=1"));
         assert!(session.cookie_header_for("example.com", "/", true, &settings).contains("sid=1"));
+    }
+
+    #[test]
+    fn cookie_set_cookie_serialization_preserves_flags() {
+        let mut cookie = Cookie::new("sid", "1", "example.com");
+        cookie.path = "/app".to_string();
+        cookie.http_only = true;
+        cookie.secure = true;
+
+        assert_eq!(
+            cookie.to_set_cookie_string(),
+            "sid=1; Domain=example.com; Path=/app; HttpOnly; Secure"
+        );
     }
 
     #[test]
