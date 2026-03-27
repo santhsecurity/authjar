@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         loaded
             .get("runner")
             .expect("runner session exists")
-            .cookie_header("example.com")
+            .cookie_header("example.com", &authjar::SessionSettings::default())
     );
 
     Ok(())

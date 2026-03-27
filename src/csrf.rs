@@ -67,6 +67,11 @@ const CSRF_HTML_NAMES: &[&str] = &[
 use std::sync::OnceLock;
 use regex::Regex;
 
+const MAX_HTML_SCAN_BYTES: usize = 256 * 1024;
+const MAX_TOKEN_NAME_LEN: usize = 128;
+const MAX_TOKEN_VALUE_LEN: usize = 4096;
+const MAX_EXTRACTED_TOKENS: usize = 128;
+
 fn meta_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     // Allow name before content OR content before name
@@ -94,9 +99,14 @@ pub fn extract_csrf_tokens(
     cookies: &[(String, String)],
 ) -> Vec<CsrfToken> {
     let mut tokens = Vec::new();
+    let html = if html_body.len() > MAX_HTML_SCAN_BYTES {
+        &html_body[..MAX_HTML_SCAN_BYTES]
+    } else {
+        html_body
+    };
 
     // 1. HTML meta tags: <meta name="csrf-token" content="...">
-    for cap in meta_regex().captures_iter(html_body) {
+    for cap in meta_regex().captures_iter(html) {
         let (name, value) = if let Some(n) = cap.get(1) {
             (n.as_str(), cap.get(2).map_or("", |m| m.as_str()))
         } else if let Some(c) = cap.get(3) {
@@ -105,17 +115,20 @@ pub fn extract_csrf_tokens(
             ("", "")
         };
 
-        if CSRF_HTML_NAMES.contains(&name.to_lowercase().as_str()) && !value.is_empty() {
+        if is_allowed_html_name(name) && is_safe_token_value(value) {
             tokens.push(CsrfToken {
                 value: value.to_string(),
                 source: CsrfSource::HtmlTag,
                 field_name: name.to_string(),
             });
+            if tokens.len() >= MAX_EXTRACTED_TOKENS {
+                return tokens;
+            }
         }
     }
 
     // Replace the complex input input_pattern logic
-    for cap in input_regex().captures_iter(html_body) {
+    for cap in input_regex().captures_iter(html) {
         let (name, value) = if let Some(n) = cap.get(1) {
             (n.as_str(), cap.get(2).map_or("", |m| m.as_str()))
         } else if let Some(v) = cap.get(3) {
@@ -124,38 +137,78 @@ pub fn extract_csrf_tokens(
             ("", "")
         };
 
-        if CSRF_HTML_NAMES.contains(&name.to_lowercase().as_str()) && !value.is_empty() {
+        if is_allowed_html_name(name) && is_safe_token_value(value) {
             tokens.push(CsrfToken {
                 value: value.to_string(),
                 source: CsrfSource::HtmlTag,
                 field_name: name.to_string(),
             });
+            if tokens.len() >= MAX_EXTRACTED_TOKENS {
+                return tokens;
+            }
         }
     }
 
     // 2. Response headers
     for (name, value) in response_headers {
-        if CSRF_HEADER_NAMES.contains(&name.to_lowercase().as_str()) && !value.is_empty() {
+        if is_allowed_header_name(name) && is_safe_token_value(value) {
             tokens.push(CsrfToken {
                 value: value.clone(),
                 source: CsrfSource::Header,
                 field_name: name.clone(),
             });
+            if tokens.len() >= MAX_EXTRACTED_TOKENS {
+                return tokens;
+            }
         }
     }
 
     // 3. Cookies
     for (name, value) in cookies {
-        if CSRF_COOKIE_NAMES.contains(&name.to_lowercase().as_str()) && !value.is_empty() {
+        if is_allowed_cookie_name(name) && is_safe_token_value(value) {
             tokens.push(CsrfToken {
                 value: value.clone(),
                 source: CsrfSource::Cookie,
                 field_name: name.clone(),
             });
+            if tokens.len() >= MAX_EXTRACTED_TOKENS {
+                return tokens;
+            }
         }
     }
 
     tokens
+}
+
+fn is_safe_token_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_TOKEN_NAME_LEN
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_'))
+}
+
+fn is_safe_token_value(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_TOKEN_VALUE_LEN
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, 0x20..=0x7e) && !matches!(byte, b'\r' | b'\n'))
+}
+
+fn is_allowed_html_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    is_safe_token_name(&lower) && CSRF_HTML_NAMES.contains(&lower.as_str())
+}
+
+fn is_allowed_header_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    is_safe_token_name(&lower) && CSRF_HEADER_NAMES.contains(&lower.as_str())
+}
+
+fn is_allowed_cookie_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    is_safe_token_name(&lower) && CSRF_COOKIE_NAMES.contains(&lower.as_str())
 }
 
 /// Inject a CSRF token into an outgoing request.
@@ -259,5 +312,25 @@ mod tests {
         let cookies = vec![("XSRF-TOKEN".to_string(), String::new())];
         let tokens = extract_csrf_tokens("", &[], &cookies);
         assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn skips_header_injection_values() {
+        let headers = vec![(
+            "X-CSRF-Token".to_string(),
+            "good\r\nX-Injected: evil".to_string(),
+        )];
+        let tokens = extract_csrf_tokens("", &headers, &[]);
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn caps_extracted_token_count() {
+        let mut html = String::new();
+        for _ in 0..256 {
+            html.push_str(r#"<meta name="csrf-token" content="v">"#);
+        }
+        let tokens = extract_csrf_tokens(&html, &[], &[]);
+        assert_eq!(tokens.len(), MAX_EXTRACTED_TOKENS);
     }
 }

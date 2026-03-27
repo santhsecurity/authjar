@@ -7,7 +7,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::OnceLock;
+
+const MAX_COOKIE_NAME_LEN: usize = 256;
+const MAX_COOKIE_VALUE_LEN: usize = 4096;
+const MAX_COOKIE_PATH_LEN: usize = 1024;
+const MAX_COOKIES_PER_SESSION: usize = 4096;
+const MAX_SESSIONS_PER_STORE: usize = 1024;
+const MAX_STORE_FILE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// An error type covering I/O and serialization operations.
 #[derive(Debug, thiserror::Error)]
@@ -144,13 +150,14 @@ impl Cookie {
         let mut segments = pair.splitn(2, '=');
         let name = segments.next()?.trim();
         let value = segments.next().map(str::trim).unwrap_or_default();
-        if !is_valid_cookie_name(name) || !is_valid_cookie_value(value) {
+        let normalized_value = value.trim_matches('"');
+        if !is_valid_cookie_name(name) || !is_valid_cookie_value(normalized_value) {
             return None;
         }
 
         let mut cookie = Cookie {
             name: name.to_string(),
-            value: value.trim_matches('"').to_string(),
+            value: normalized_value.to_string(),
             domain: String::new(),
             path: "/".to_string(),
             http_only: false,
@@ -184,7 +191,7 @@ impl Cookie {
                                 return None;
                             }
                         }
-                        _ => {}
+                        _ => return None,
                     }
                 }
                 None => match attribute.to_ascii_lowercase().as_str() {
@@ -288,6 +295,12 @@ impl AuthSession {
             return;
         }
         let key = cookie.key();
+        if !self.cookies.contains_key(&key) && self.cookies.len() >= MAX_COOKIES_PER_SESSION {
+            tracing::warn!(
+                "rejected cookie due to session cookie limit (Fix: lower cookie cardinality)"
+            );
+            return;
+        }
         self.cookies.insert(key, cookie);
     }
 
@@ -309,8 +322,8 @@ impl AuthSession {
 
     /// Collect cookies for the given domain as a `Cookie` header value.
     #[must_use]
-    pub fn cookie_header(&self, domain: &str) -> String {
-        self.cookie_header_for(domain, "/", false, default_session_settings())
+    pub fn cookie_header(&self, domain: &str, settings: &SessionSettings) -> String {
+        self.cookie_header_for(domain, "/", false, settings)
     }
 
     /// Collect cookies for a specific request context.
@@ -429,6 +442,14 @@ impl SessionStore {
     /// # Errors
     /// Returns `AuthJarError` if loading from file fails.
     pub fn load_from_file(path: impl AsRef<Path>) -> Result<Self, AuthJarError> {
+        let metadata = fs::metadata(path.as_ref())?;
+        if metadata.len() > MAX_STORE_FILE_BYTES {
+            return Err(AuthJarError::Invalid(format!(
+                "session store file too large ({} bytes). Fix: keep file <= {} bytes",
+                metadata.len(),
+                MAX_STORE_FILE_BYTES
+            )));
+        }
         let payload = fs::read_to_string(path)?;
         let store: Self = serde_json::from_str(&payload)?;
         store.validate()?;
@@ -440,6 +461,14 @@ impl SessionStore {
     /// Returns `AuthJarError` if async file reading, deserialization, or validation fails.
     #[cfg(feature = "tokio")]
     pub async fn load_from_file_async(path: impl AsRef<Path>) -> Result<Self, AuthJarError> {
+        let metadata = tokio::fs::metadata(path.as_ref()).await?;
+        if metadata.len() > MAX_STORE_FILE_BYTES {
+            return Err(AuthJarError::Invalid(format!(
+                "session store file too large ({} bytes). Fix: keep file <= {} bytes",
+                metadata.len(),
+                MAX_STORE_FILE_BYTES
+            )));
+        }
         let payload = tokio::fs::read_to_string(path).await?;
         let store: Self = serde_json::from_str(&payload)?;
         store.validate()?;
@@ -448,6 +477,12 @@ impl SessionStore {
 
     /// Add or replace a session.
     pub fn add(&mut self, session: AuthSession) {
+        if !self.sessions.contains_key(&session.name) && self.sessions.len() >= MAX_SESSIONS_PER_STORE {
+            tracing::warn!(
+                "rejected session due to store limit (Fix: prune old sessions)"
+            );
+            return;
+        }
         self.sessions.insert(session.name.clone(), session);
     }
 
@@ -459,6 +494,12 @@ impl SessionStore {
         cookie_value: impl Into<String>,
         cookie_domain: impl Into<String>,
     ) {
+        if !self.sessions.contains_key(session_name) && self.sessions.len() >= MAX_SESSIONS_PER_STORE {
+            tracing::warn!(
+                "rejected session creation due to store limit (Fix: prune old sessions)"
+            );
+            return;
+        }
         let entry = self
             .sessions
             .entry(session_name.to_string())
@@ -474,6 +515,12 @@ impl SessionStore {
         header_value: &str,
         default_domain: &str,
     ) {
+        if !self.sessions.contains_key(session_name) && self.sessions.len() >= MAX_SESSIONS_PER_STORE {
+            tracing::warn!(
+                "rejected session creation due to store limit (Fix: prune old sessions)"
+            );
+            return;
+        }
         let entry = self
             .sessions
             .entry(session_name.to_string())
@@ -515,9 +562,21 @@ impl SessionStore {
 
     fn validate(&self) -> Result<(), AuthJarError> {
         self.settings.validate()?;
+        if self.sessions.len() > MAX_SESSIONS_PER_STORE {
+            return Err(AuthJarError::Invalid(format!(
+                "too many sessions: {} (Fix: keep <= {MAX_SESSIONS_PER_STORE})",
+                self.sessions.len()
+            )));
+        }
         for (name, session) in &self.sessions {
             if name.trim().is_empty() || name.chars().any(char::is_control) {
                 return Err(AuthJarError::Invalid(format!("invalid session name `{name}`")));
+            }
+            if session.cookies.len() > MAX_COOKIES_PER_SESSION {
+                return Err(AuthJarError::Invalid(format!(
+                    "too many cookies in session `{name}`: {} (Fix: keep <= {MAX_COOKIES_PER_SESSION})",
+                    session.cookies.len()
+                )));
             }
             for cookie in session.cookies.values() {
                 if !is_valid_cookie_name(&cookie.name) || !is_valid_cookie_value(&cookie.value) {
@@ -534,20 +593,20 @@ impl SessionStore {
     }
 }
 
-fn default_session_settings() -> &'static SessionSettings {
-    static DEFAULT_SETTINGS: OnceLock<SessionSettings> = OnceLock::new();
-    DEFAULT_SETTINGS.get_or_init(SessionSettings::default)
-}
-
 fn is_valid_cookie_name(name: &str) -> bool {
     !name.is_empty()
+        && name.len() <= MAX_COOKIE_NAME_LEN
         && name
             .bytes()
             .all(|byte| matches!(byte, 0x21..=0x7e) && !b"()<>@,;:\\\"/[]?={} \t".contains(&byte))
 }
 
 fn is_valid_cookie_value(value: &str) -> bool {
-    !value.chars().any(|ch| ch.is_control() && ch != '\t')
+    !value.is_empty()
+        && value.len() <= MAX_COOKIE_VALUE_LEN
+        && value.bytes().all(|byte| {
+            matches!(byte, 0x21..=0x7e) && !matches!(byte, b';' | b',' | b'\\' | b'"')
+        })
 }
 
 fn validate_domain(domain: &str) -> Result<(), AuthJarError> {
@@ -575,7 +634,11 @@ fn validate_domain(domain: &str) -> Result<(), AuthJarError> {
 }
 
 fn validate_cookie_path(path: &str) -> Result<(), AuthJarError> {
-    if path.is_empty() || !path.starts_with('/') || path.chars().any(char::is_control) {
+    if path.is_empty()
+        || path.len() > MAX_COOKIE_PATH_LEN
+        || !path.starts_with('/')
+        || path.chars().any(char::is_control)
+    {
         return Err(AuthJarError::Invalid(format!("invalid cookie path `{path}`")));
     }
     Ok(())
@@ -719,6 +782,11 @@ mod tests {
     }
 
     #[test]
+    fn parse_set_cookie_rejects_cookie_injection_value() {
+        assert!(Cookie::from_set_cookie("sid=abc;admin=true; Path=/", "example.com").is_none());
+    }
+
+    #[test]
     fn parse_header_with_set_cookie_prefix() {
         let cookie = Cookie::from_header_line("Set-Cookie: x=1; Domain=.example.com; Path=/; Secure")
             .expect("header parse");
@@ -744,6 +812,13 @@ mod tests {
     fn add_cookie_rejects_invalid_inputs() {
         let mut session = AuthSession::new("invalid");
         session.add_cookie_with_path("bad name", "value", "bad domain", "relative", false, false);
+        assert!(session.is_empty());
+    }
+
+    #[test]
+    fn add_cookie_rejects_header_injection_value() {
+        let mut session = AuthSession::new("invalid-value");
+        session.add_cookie("sid", "a\r\nSet-Cookie: hacked=1", "example.com");
         assert!(session.is_empty());
     }
 
@@ -861,7 +936,7 @@ mod tests {
         assert!(loaded
             .get("bot")
             .unwrap()
-            .cookie_header("example.com")
+            .cookie_header("example.com", &SessionSettings::default())
             .contains("token=abc"));
 
         let _ = fs::remove_file(path);
@@ -933,6 +1008,21 @@ mod tests {
         let loaded = SessionStore::load_from_file_async(&path).await.unwrap();
 
         assert_eq!(loaded.len(), 1);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn session_store_rejects_oversized_file() {
+        let path = temp_path("oversized_store");
+        let oversized = vec![
+            b'a';
+            usize::try_from(MAX_STORE_FILE_BYTES).expect("store size fits in usize") + 1
+        ];
+        fs::write(&path, oversized).unwrap();
+
+        let err = SessionStore::load_from_file(&path).unwrap_err();
+        assert!(err.to_string().contains("Fix: keep file <="));
+
         let _ = fs::remove_file(path);
     }
 }

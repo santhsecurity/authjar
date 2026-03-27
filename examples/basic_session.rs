@@ -8,11 +8,11 @@ fn main() {
     user.add_cookie("prefs", "dark", "example.com");
     user.add_cookie("api_token", "token-456", "api.example.com");
 
-    let direct_cookie = user.cookie_header("example.com");
+    let direct_cookie = user.cookie_header("example.com", &authjar::SessionSettings::default());
     println!("cookies for example.com: {direct_cookie}");
 
     user.add_cookie_header_line("Set-Cookie: promo=summer; Domain=.example.com; Path=/");
-    let all = user.cookie_header("example.com");
+    let all = user.cookie_header("example.com", &authjar::SessionSettings::default());
     println!("cookies after header parse: {all}");
 
     store.add(user);

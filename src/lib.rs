@@ -11,7 +11,7 @@
 //! # Usage
 //!
 //! ```rust
-//! use authjar::{AuthSession, Cookie, CsrfSource};
+//! use authjar::{AuthSession, Cookie, CsrfSource, SessionSettings};
 //!
 //! // Create a session with cookies.
 //! let mut session = AuthSession::new("admin");
@@ -19,7 +19,7 @@
 //! session.add_cookie("auth_token", "xyz789", "example.com");
 //!
 //! // Apply cookies to an outgoing request.
-//! let cookies = session.cookie_header("example.com");
+//! let cookies = session.cookie_header("example.com", &SessionSettings::default());
 //! assert!(cookies.contains("PHPSESSID=abc123"));
 //! ```
 
